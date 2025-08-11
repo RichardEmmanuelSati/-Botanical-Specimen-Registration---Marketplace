@@ -15,7 +15,9 @@
   conservation-status: (string-ascii 20),
   registered-at: uint,
   license-price: uint,
-  royalty-percent: uint
+  royalty-percent: uint,
+  verification-status: (string-ascii 20),
+  verified-at: (optional uint)
 })
 
 (define-map licenses {specimen-id: uint, licensee: principal} {
@@ -51,8 +53,34 @@
 
 (define-map bounty-contributions {bounty-id: uint, contributor: principal} uint)
 
+(define-map verification-requests uint {
+  specimen-id: uint,
+  requester: principal,
+  created-at: uint,
+  expires-at: uint,
+  reviews-needed: uint,
+  reviews-submitted: uint,
+  approvals: uint,
+  rejections: uint,
+  status: (string-ascii 20)
+})
+
+(define-map peer-reviews {request-id: uint, reviewer: principal} {
+  approved: bool,
+  review-notes: (string-ascii 500),
+  submitted-at: uint
+})
+
+(define-map reviewer-reputation principal {
+  total-reviews: uint,
+  accurate-reviews: uint,
+  reputation-score: uint
+})
+
 (define-data-var next-proposal-id uint u1)
 (define-data-var next-bounty-id uint u1)
+(define-data-var next-verification-id uint u1)
+(define-data-var min-reviews-required uint u3)
 
 (define-constant err-not-authorized (err u1001))
 (define-constant err-not-found (err u1002))
@@ -60,6 +88,8 @@
 (define-constant err-invalid-amount (err u1004))
 (define-constant err-expired (err u1005))
 (define-constant err-insufficient-funds (err u1006))
+(define-constant err-verification-required (err u1007))
+(define-constant err-already-reviewed (err u1008))
 
 (define-read-only (get-specimen (specimen-id uint))
   (map-get? specimens specimen-id))
@@ -75,6 +105,15 @@
 
 (define-read-only (get-next-specimen-id)
   (var-get next-specimen-id))
+
+(define-read-only (get-verification-request (request-id uint))
+  (map-get? verification-requests request-id))
+
+(define-read-only (get-peer-review (request-id uint) (reviewer principal))
+  (map-get? peer-reviews {request-id: request-id, reviewer: reviewer}))
+
+(define-read-only (get-reviewer-reputation (reviewer principal))
+  (map-get? reviewer-reputation reviewer))
 
 (define-public (register-specimen 
   (scientific-name (string-ascii 100))
@@ -97,7 +136,9 @@
       conservation-status: "unknown",
       registered-at: block-height,
       license-price: license-price,
-      royalty-percent: royalty-percent
+      royalty-percent: royalty-percent,
+      verification-status: "pending",
+      verified-at: none
     })
     (var-set next-specimen-id (+ specimen-id u1))
     (ok specimen-id)))
@@ -109,6 +150,7 @@
         (owner-payment (- license-cost platform-fee))
         (royalty-amount (/ (* license-cost (get royalty-percent specimen)) u100))
         (discoverer-payment (- owner-payment royalty-amount)))
+    (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
     (try! (stx-transfer? license-cost tx-sender (get owner specimen)))
     (if (not (is-eq (get owner specimen) (get discoverer specimen)))
       (try! (stx-transfer? royalty-amount (get owner specimen) (get discoverer specimen)))
@@ -204,5 +246,78 @@
     (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
     (map-set specimens specimen-id (merge specimen {license-price: new-price}))
     (ok true)))
+
+(define-public (request-verification (specimen-id uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (verification-id (var-get next-verification-id)))
+    (asserts! (is-eq tx-sender (get discoverer specimen)) err-not-authorized)
+    (asserts! (is-eq (get verification-status specimen) "pending") err-already-exists)
+    (map-set verification-requests verification-id {
+      specimen-id: specimen-id,
+      requester: tx-sender,
+      created-at: block-height,
+      expires-at: (+ block-height u1008),
+      reviews-needed: (var-get min-reviews-required),
+      reviews-submitted: u0,
+      approvals: u0,
+      rejections: u0,
+      status: "open"
+    })
+    (var-set next-verification-id (+ verification-id u1))
+    (ok verification-id)))
+
+(define-public (submit-peer-review (request-id uint) (approved bool) (review-notes (string-ascii 500)))
+  (let ((verification-request (unwrap! (map-get? verification-requests request-id) err-not-found))
+        (existing-review (map-get? peer-reviews {request-id: request-id, reviewer: tx-sender})))
+    (asserts! (is-none existing-review) err-already-reviewed)
+    (asserts! (< block-height (get expires-at verification-request)) err-expired)
+    (asserts! (is-eq (get status verification-request) "open") err-expired)
+    (map-set peer-reviews {request-id: request-id, reviewer: tx-sender} {
+      approved: approved,
+      review-notes: review-notes,
+      submitted-at: block-height
+    })
+    (let ((updated-request (merge verification-request {
+            reviews-submitted: (+ (get reviews-submitted verification-request) u1),
+            approvals: (if approved (+ (get approvals verification-request) u1) (get approvals verification-request)),
+            rejections: (if approved (get rejections verification-request) (+ (get rejections verification-request) u1))
+          }))
+          (current-reputation (default-to {total-reviews: u0, accurate-reviews: u0, reputation-score: u0} 
+                                         (map-get? reviewer-reputation tx-sender))))
+      (map-set verification-requests request-id updated-request)
+      (map-set reviewer-reputation tx-sender (merge current-reputation {
+        total-reviews: (+ (get total-reviews current-reputation) u1)
+      }))
+      (if (>= (get reviews-submitted updated-request) (get reviews-needed updated-request))
+        (finalize-verification request-id)
+        (ok true)))))
+
+(define-private (finalize-verification (request-id uint))
+  (let ((verification-request (unwrap! (map-get? verification-requests request-id) err-not-found))
+        (specimen-id (get specimen-id verification-request))
+        (specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (let ((final-status (if (> (get approvals verification-request) (get rejections verification-request)) "verified" "rejected")))
+      (map-set specimens specimen-id (merge specimen {
+        verification-status: final-status,
+        verified-at: (if (is-eq final-status "verified") (some block-height) none)
+      }))
+      (map-set verification-requests request-id (merge verification-request {status: "completed"}))
+      (ok true))))
+
+(define-public (update-reviewer-accuracy (reviewer principal) (was-accurate bool))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) err-not-authorized)
+    (let ((current-reputation (default-to {total-reviews: u0, accurate-reviews: u0, reputation-score: u0} 
+                                         (map-get? reviewer-reputation reviewer))))
+      (let ((new-accurate-count (if was-accurate (+ (get accurate-reviews current-reputation) u1) (get accurate-reviews current-reputation)))
+            (total-reviews (get total-reviews current-reputation)))
+        (if (> total-reviews u0)
+          (let ((new-score (/ (* new-accurate-count u100) total-reviews)))
+            (map-set reviewer-reputation reviewer (merge current-reputation {
+              accurate-reviews: new-accurate-count,
+              reputation-score: new-score
+            }))
+            (ok true))
+          (ok true))))))
 
 
