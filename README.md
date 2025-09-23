@@ -1,4 +1,4 @@
-> A decentralized registry and marketplace for tokenizing botanical specimens and licensing their use 🌱
+A decentralized registry and marketplace for tokenizing botanical specimens and licensing their use 🌱
 
 ## 🚀 Overview
 
@@ -31,14 +31,25 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - **Community Funding**: Multiple contributors can fund preservation initiatives
 - **Achievement Rewards**: Discoverers can claim bounties upon meeting targets
 
-## 🛠️ Technical Implementation
+### 🛡️ Auction System
+- **Competitive Trading**: Auction verified specimens for market-driven pricing
+- **Bid Management**: Place bids with automatic refunds for outbid participants
+- **Secure Transfers**: Automatic NFT and payment settlement upon auction end
+
+### 🌿 Specimen Retirement
+- **Conservation Control**: Owners can retire specimens to prevent further licensing or auctions
+- **Ethical Safeguards**: Protect sensitive specimens from commercial activities
+- **Lifecycle Management**: Complete control over specimen availability and status
+
+## �️ Technical Implementation
 
 ### Smart Contract Functions
 
 #### Registration & Management
 - `register-specimen()` - Register a new botanical specimen NFT
-- `transfer-specimen()` - Transfer specimen ownership 
+- `transfer-specimen()` - Transfer specimen ownership
 - `update-license-price()` - Update licensing price for owned specimens
+- `retire-specimen()` - Retire a specimen to prevent further commercial activities
 
 #### Licensing System
 - `purchase-license()` - Purchase a license for specimen use
@@ -130,11 +141,12 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 
 ### Error Codes
 - `u1001` - Not authorized
-- `u1002` - Not found  
+- `u1002` - Not found
 - `u1003` - Already exists
 - `u1004` - Invalid amount
 - `u1005` - Expired
 - `u1006` - Insufficient funds
+- `u1012` - Already retired
 
 ## 🌱 Use Cases
 
@@ -152,6 +164,7 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - Community votes on endangered species status
 - Crowdfunded preservation initiatives
 - Incentivized botanical discovery missions
+- Specimen retirement for ethical protection of sensitive discoveries
 
 ## 🤝 Contributing
 

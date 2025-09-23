@@ -17,7 +17,8 @@
   license-price: uint,
   royalty-percent: uint,
   verification-status: (string-ascii 20),
-  verified-at: (optional uint)
+  verified-at: (optional uint),
+  retired: bool
 })
 
 (define-map licenses {specimen-id: uint, licensee: principal} {
@@ -77,10 +78,23 @@
   reputation-score: uint
 })
 
+(define-map auctions uint {
+  specimen-id: uint,
+  seller: principal,
+  starting-price: uint,
+  current-bid: uint,
+  current-bidder: (optional principal),
+  end-block: uint,
+  status: (string-ascii 20)
+})
+
+(define-map auction-bids {auction-id: uint, bidder: principal} uint)
+
 (define-data-var next-proposal-id uint u1)
 (define-data-var next-bounty-id uint u1)
 (define-data-var next-verification-id uint u1)
 (define-data-var min-reviews-required uint u3)
+(define-data-var next-auction-id uint u1)
 
 (define-constant err-not-authorized (err u1001))
 (define-constant err-not-found (err u1002))
@@ -90,6 +104,10 @@
 (define-constant err-insufficient-funds (err u1006))
 (define-constant err-verification-required (err u1007))
 (define-constant err-already-reviewed (err u1008))
+(define-constant err-auction-not-found (err u1009))
+(define-constant err-auction-ended (err u1010))
+(define-constant err-bid-too-low (err u1011))
+(define-constant err-already-retired (err u1012))
 
 (define-read-only (get-specimen (specimen-id uint))
   (map-get? specimens specimen-id))
@@ -115,6 +133,12 @@
 (define-read-only (get-reviewer-reputation (reviewer principal))
   (map-get? reviewer-reputation reviewer))
 
+(define-read-only (get-auction (auction-id uint))
+  (map-get? auctions auction-id))
+
+(define-read-only (get-auction-bid (auction-id uint) (bidder principal))
+  (map-get? auction-bids {auction-id: auction-id, bidder: bidder}))
+
 (define-public (register-specimen 
   (scientific-name (string-ascii 100))
   (common-name (string-ascii 100))
@@ -138,7 +162,8 @@
       license-price: license-price,
       royalty-percent: royalty-percent,
       verification-status: "pending",
-      verified-at: none
+      verified-at: none,
+      retired: false
     })
     (var-set next-specimen-id (+ specimen-id u1))
     (ok specimen-id)))
@@ -151,6 +176,7 @@
         (royalty-amount (/ (* license-cost (get royalty-percent specimen)) u100))
         (discoverer-payment (- owner-payment royalty-amount)))
     (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
     (try! (stx-transfer? license-cost tx-sender (get owner specimen)))
     (if (not (is-eq (get owner specimen) (get discoverer specimen)))
       (try! (stx-transfer? royalty-amount (get owner specimen) (get discoverer specimen)))
@@ -247,6 +273,13 @@
     (map-set specimens specimen-id (merge specimen {license-price: new-price}))
     (ok true)))
 
+(define-public (retire-specimen (specimen-id uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (map-set specimens specimen-id (merge specimen {retired: true}))
+    (ok true)))
+
 (define-public (request-verification (specimen-id uint))
   (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
         (verification-id (var-get next-verification-id)))
@@ -307,7 +340,7 @@
 (define-public (update-reviewer-accuracy (reviewer principal) (was-accurate bool))
   (begin
     (asserts! (is-eq tx-sender (var-get contract-owner)) err-not-authorized)
-    (let ((current-reputation (default-to {total-reviews: u0, accurate-reviews: u0, reputation-score: u0} 
+    (let ((current-reputation (default-to {total-reviews: u0, accurate-reviews: u0, reputation-score: u0}
                                          (map-get? reviewer-reputation reviewer))))
       (let ((new-accurate-count (if was-accurate (+ (get accurate-reviews current-reputation) u1) (get accurate-reviews current-reputation)))
             (total-reviews (get total-reviews current-reputation)))
@@ -319,5 +352,60 @@
             }))
             (ok true))
           (ok true))))))
+
+(define-public (create-auction (specimen-id uint) (starting-price uint) (duration uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (auction-id (var-get next-auction-id)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (map-set auctions auction-id {
+      specimen-id: specimen-id,
+      seller: tx-sender,
+      starting-price: starting-price,
+      current-bid: u0,
+      current-bidder: none,
+      end-block: (+ block-height duration),
+      status: "active"
+    })
+    (var-set next-auction-id (+ auction-id u1))
+    (ok auction-id)))
+
+(define-public (place-bid (auction-id uint) (bid-amount uint))
+  (let ((auction (unwrap! (map-get? auctions auction-id) err-auction-not-found)))
+    (asserts! (is-eq (get status auction) "active") err-auction-ended)
+    (asserts! (< block-height (get end-block auction)) err-expired)
+    (asserts! (> bid-amount (get current-bid auction)) err-bid-too-low)
+    (let ((previous-bidder (get current-bidder auction)))
+      (if (is-some previous-bidder)
+        (let ((refund-amount (unwrap-panic (map-get? auction-bids {auction-id: auction-id, bidder: (unwrap-panic previous-bidder)}))))
+          (try! (as-contract (stx-transfer? refund-amount tx-sender (unwrap-panic previous-bidder)))))
+        true)
+      (try! (stx-transfer? bid-amount tx-sender (as-contract tx-sender)))
+      (map-set auction-bids {auction-id: auction-id, bidder: tx-sender} bid-amount)
+      (map-set auctions auction-id (merge auction {
+        current-bid: bid-amount,
+        current-bidder: (some tx-sender)
+      }))
+      (ok true))))
+
+(define-public (end-auction (auction-id uint))
+  (let ((auction (unwrap! (map-get? auctions auction-id) err-auction-not-found)))
+    (asserts! (>= block-height (get end-block auction)) err-not-authorized)
+    (asserts! (is-eq (get status auction) "active") err-already-exists)
+    (if (is-some (get current-bidder auction))
+      (let ((winner (unwrap-panic (get current-bidder auction)))
+            (final-bid (get current-bid auction))
+            (platform-fee (/ (* final-bid (var-get platform-fee-percent)) u100))
+            (seller-payment (- final-bid platform-fee)))
+        (try! (as-contract (stx-transfer? seller-payment tx-sender (get seller auction))))
+        (try! (stx-transfer? platform-fee (as-contract tx-sender) (var-get contract-owner)))
+        (try! (nft-transfer? botanical-specimen (get specimen-id auction) (get seller auction) winner))
+        (map-set specimens (get specimen-id auction) (merge (unwrap-panic (map-get? specimens (get specimen-id auction))) {owner: winner}))
+        (map-set auctions auction-id (merge auction {status: "completed"}))
+        (ok true))
+      (begin
+        (map-set auctions auction-id (merge auction {status: "cancelled"}))
+        (ok true)))))
 
 
