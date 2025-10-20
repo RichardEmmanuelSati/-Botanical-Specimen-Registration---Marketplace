@@ -41,6 +41,12 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - **Ethical Safeguards**: Protect sensitive specimens from commercial activities
 - **Lifecycle Management**: Complete control over specimen availability and status
 
+### 🔄 Specimen Swap System
+- **Peer-to-Peer Trading**: Propose and accept direct specimen swaps without monetary transactions
+- **Verified Exchanges**: Only verified specimens can be swapped to ensure authenticity
+- **Time-Limited Proposals**: Swap proposals expire after 144 blocks to prevent stale offers
+- **Mutual Consent**: Both parties must agree to complete the exchange
+
 ## �️ Technical Implementation
 
 ### Smart Contract Functions
@@ -64,6 +70,12 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - `create-bounty()` - Create preservation bounties
 - `contribute-to-bounty()` - Contribute funds to bounties
 - `claim-bounty()` - Claim completed bounty rewards
+
+#### Swap System
+- `propose-swap()` - Propose a specimen swap with another owner
+- `accept-swap()` - Accept a pending swap proposal
+- `cancel-swap()` - Cancel an outstanding swap proposal
+- `get-swap-proposal()` - View details of a swap proposal
 
 ## 🚀 Getting Started
 
@@ -132,6 +144,20 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
   u1008)                               ;; duration (1 week in blocks)
 ```
 
+#### Propose Specimen Swap
+```clarity
+(contract-call? .botanical-specimen-marketplace propose-swap
+  u1    ;; proposer-specimen-id
+  u2)   ;; target-specimen-id
+```
+
+#### Accept Specimen Swap
+```clarity
+(contract-call? .botanical-specimen-marketplace accept-swap
+  u1    ;; proposer-specimen-id
+  u2)   ;; target-specimen-id
+```
+
 ## 🔧 Configuration
 
 ### Platform Settings
@@ -147,6 +173,9 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - `u1005` - Expired
 - `u1006` - Insufficient funds
 - `u1012` - Already retired
+- `u1013` - Swap not found
+- `u1014` - Swap already accepted
+- `u1015` - Swap expired
 
 ## 🌱 Use Cases
 
@@ -165,6 +194,7 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - Crowdfunded preservation initiatives
 - Incentivized botanical discovery missions
 - Specimen retirement for ethical protection of sensitive discoveries
+- Direct specimen swaps for collaborative research exchanges
 
 ## 🤝 Contributing
 

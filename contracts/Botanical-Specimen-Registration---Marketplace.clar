@@ -90,6 +90,12 @@
 
 (define-map auction-bids {auction-id: uint, bidder: principal} uint)
 
+(define-map swap-proposals {proposer-specimen: uint, target-specimen: uint} {
+  proposer: principal,
+  proposed-at: uint,
+  status: (string-ascii 20)
+})
+
 (define-data-var next-proposal-id uint u1)
 (define-data-var next-bounty-id uint u1)
 (define-data-var next-verification-id uint u1)
@@ -108,6 +114,9 @@
 (define-constant err-auction-ended (err u1010))
 (define-constant err-bid-too-low (err u1011))
 (define-constant err-already-retired (err u1012))
+(define-constant err-swap-not-found (err u1013))
+(define-constant err-swap-already-accepted (err u1014))
+(define-constant err-swap-expired (err u1015))
 
 (define-read-only (get-specimen (specimen-id uint))
   (map-get? specimens specimen-id))
@@ -139,7 +148,48 @@
 (define-read-only (get-auction-bid (auction-id uint) (bidder principal))
   (map-get? auction-bids {auction-id: auction-id, bidder: bidder}))
 
-(define-public (register-specimen 
+(define-read-only (get-swap-proposal (proposer-specimen uint) (target-specimen uint))
+  (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}))
+
+(define-public (propose-swap (proposer-specimen uint) (target-specimen uint))
+  (let ((proposer-specimen-data (unwrap! (map-get? specimens proposer-specimen) err-not-found))
+        (target-specimen-data (unwrap! (map-get? specimens target-specimen) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner proposer-specimen-data)) err-not-authorized)
+    (asserts! (not (is-eq proposer-specimen target-specimen)) err-already-exists)
+    (asserts! (is-eq (get verification-status proposer-specimen-data) "verified") err-verification-required)
+    (asserts! (is-eq (get verification-status target-specimen-data) "verified") err-verification-required)
+    (asserts! (is-eq (get retired proposer-specimen-data) false) err-already-retired)
+    (asserts! (is-eq (get retired target-specimen-data) false) err-already-retired)
+    (asserts! (is-none (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen})) err-already-exists)
+    (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} {
+      proposer: tx-sender,
+      proposed-at: block-height,
+      status: "pending"
+    })
+    (ok true)))
+
+(define-public (accept-swap (proposer-specimen uint) (target-specimen uint))
+  (let ((swap-proposal (unwrap! (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}) err-swap-not-found))
+        (proposer-specimen-data (unwrap! (map-get? specimens proposer-specimen) err-not-found))
+        (target-specimen-data (unwrap! (map-get? specimens target-specimen) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner target-specimen-data)) err-not-authorized)
+    (asserts! (is-eq (get status swap-proposal) "pending") err-swap-already-accepted)
+    (asserts! (< (- block-height (get proposed-at swap-proposal)) u144) err-swap-expired)
+    (try! (nft-transfer? botanical-specimen proposer-specimen (get owner proposer-specimen-data) (get owner target-specimen-data)))
+    (try! (nft-transfer? botanical-specimen target-specimen (get owner target-specimen-data) (get owner proposer-specimen-data)))
+    (map-set specimens proposer-specimen (merge proposer-specimen-data {owner: (get owner target-specimen-data)}))
+    (map-set specimens target-specimen (merge target-specimen-data {owner: (get owner proposer-specimen-data)}))
+    (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} (merge swap-proposal {status: "completed"}))
+    (ok true)))
+
+(define-public (cancel-swap (proposer-specimen uint) (target-specimen uint))
+  (let ((swap-proposal (unwrap! (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}) err-swap-not-found)))
+    (asserts! (is-eq tx-sender (get proposer swap-proposal)) err-not-authorized)
+    (asserts! (is-eq (get status swap-proposal) "pending") err-swap-already-accepted)
+    (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} (merge swap-proposal {status: "cancelled"}))
+    (ok true)))
+
+(define-public (register-specimen
   (scientific-name (string-ascii 100))
   (common-name (string-ascii 100))
   (location (string-ascii 200))
