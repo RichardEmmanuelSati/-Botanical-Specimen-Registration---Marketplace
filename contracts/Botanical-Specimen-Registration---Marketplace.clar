@@ -96,11 +96,25 @@
   status: (string-ascii 20)
 })
 
+(define-map lease-terms uint {
+  daily-rate: uint,
+  max-duration: uint,
+  status: (string-ascii 20)
+})
+
+(define-map leases {specimen-id: uint, lessee: principal} {
+  lease-start: uint,
+  lease-end: uint,
+  total-paid: uint,
+  status: (string-ascii 20)
+})
+
 (define-data-var next-proposal-id uint u1)
 (define-data-var next-bounty-id uint u1)
 (define-data-var next-verification-id uint u1)
 (define-data-var min-reviews-required uint u3)
 (define-data-var next-auction-id uint u1)
+(define-data-var next-lease-id uint u1)
 
 (define-constant err-not-authorized (err u1001))
 (define-constant err-not-found (err u1002))
@@ -117,6 +131,10 @@
 (define-constant err-swap-not-found (err u1013))
 (define-constant err-swap-already-accepted (err u1014))
 (define-constant err-swap-expired (err u1015))
+(define-constant err-lease-not-found (err u1016))
+(define-constant err-lease-active (err u1017))
+(define-constant err-lease-expired (err u1018))
+(define-constant err-invalid-duration (err u1019))
 
 (define-read-only (get-specimen (specimen-id uint))
   (map-get? specimens specimen-id))
@@ -150,6 +168,9 @@
 
 (define-read-only (get-swap-proposal (proposer-specimen uint) (target-specimen uint))
   (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}))
+
+(define-read-only (get-lease (specimen-id uint) (lessee principal))
+  (map-get? leases {specimen-id: specimen-id, lessee: lessee}))
 
 (define-public (propose-swap (proposer-specimen uint) (target-specimen uint))
   (let ((proposer-specimen-data (unwrap! (map-get? specimens proposer-specimen) err-not-found))
@@ -187,6 +208,43 @@
     (asserts! (is-eq tx-sender (get proposer swap-proposal)) err-not-authorized)
     (asserts! (is-eq (get status swap-proposal) "pending") err-swap-already-accepted)
     (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} (merge swap-proposal {status: "cancelled"}))
+    (ok true)))
+
+(define-public (set-lease-terms (specimen-id uint) (daily-rate uint) (max-duration uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (asserts! (> max-duration u0) err-invalid-duration)
+    (asserts! (> daily-rate u0) err-invalid-amount)
+    (map-set lease-terms specimen-id {
+      daily-rate: daily-rate,
+      max-duration: max-duration,
+      status: "active"
+    })
+    (ok true)))
+
+(define-public (rent-specimen (specimen-id uint) (rental-days uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (lease-terms-data (unwrap! (map-get? lease-terms specimen-id) err-lease-not-found))
+        (rental-cost (* (get daily-rate lease-terms-data) rental-days)))
+    (asserts! (is-eq (get status lease-terms-data) "active") err-lease-expired)
+    (asserts! (<= rental-days (get max-duration lease-terms-data)) err-invalid-duration)
+    (asserts! (> rental-days u0) err-invalid-duration)
+    (asserts! (is-none (map-get? leases {specimen-id: specimen-id, lessee: tx-sender})) err-already-exists)
+    (try! (stx-transfer? rental-cost tx-sender (get owner specimen)))
+    (map-set leases {specimen-id: specimen-id, lessee: tx-sender} {
+      lease-start: block-height,
+      lease-end: (+ block-height rental-days),
+      total-paid: rental-cost,
+      status: "active"
+    })
+    (ok true)))
+
+(define-public (end-lease (specimen-id uint))
+  (let ((lease (unwrap! (map-get? leases {specimen-id: specimen-id, lessee: tx-sender}) err-lease-not-found)))
+    (asserts! (is-eq (get status lease) "active") err-lease-expired)
+    (map-set leases {specimen-id: specimen-id, lessee: tx-sender} (merge lease {status: "ended"}))
     (ok true)))
 
 (define-public (register-specimen

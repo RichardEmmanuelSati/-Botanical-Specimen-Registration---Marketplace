@@ -47,6 +47,12 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - **Time-Limited Proposals**: Swap proposals expire after 144 blocks to prevent stale offers
 - **Mutual Consent**: Both parties must agree to complete the exchange
 
+### 🏠 Specimen Leasing System
+- **Flexible Rental Terms**: Owners set daily rates and maximum rental durations for their specimens
+- **Short-Term Access**: Researchers rent specimens for specific periods without permanent ownership transfer
+- **Automated Payments**: Smart contract handles rental payments and tracks lease periods
+- **Lease Management**: Lessees can end leases early, with full control over rental agreements
+
 ## �️ Technical Implementation
 
 ### Smart Contract Functions
@@ -76,6 +82,12 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - `accept-swap()` - Accept a pending swap proposal
 - `cancel-swap()` - Cancel an outstanding swap proposal
 - `get-swap-proposal()` - View details of a swap proposal
+
+#### Leasing System
+- `set-lease-terms()` - Set rental terms including daily rate and maximum duration
+- `rent-specimen()` - Rent a specimen for a specified number of days
+- `end-lease()` - End an active lease agreement
+- `get-lease()` - View lease details and status
 
 ## 🚀 Getting Started
 
@@ -158,6 +170,21 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
   u2)   ;; target-specimen-id
 ```
 
+#### Set Lease Terms
+```clarity
+(contract-call? .botanical-specimen-marketplace set-lease-terms
+  u1        ;; specimen-id
+  u50000    ;; daily-rate (in microSTX)
+  u30)      ;; max-duration (days)
+```
+
+#### Rent Specimen
+```clarity
+(contract-call? .botanical-specimen-marketplace rent-specimen
+  u1    ;; specimen-id
+  u7)   ;; rental-days
+```
+
 ## 🔧 Configuration
 
 ### Platform Settings
@@ -176,6 +203,10 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - `u1013` - Swap not found
 - `u1014` - Swap already accepted
 - `u1015` - Swap expired
+- `u1016` - Lease not found
+- `u1017` - Lease active
+- `u1018` - Lease expired
+- `u1019` - Invalid duration
 
 ## 🌱 Use Cases
 
@@ -195,6 +226,7 @@ The Botanical Specimen Registration & Marketplace is a blockchain-based platform
 - Incentivized botanical discovery missions
 - Specimen retirement for ethical protection of sensitive discoveries
 - Direct specimen swaps for collaborative research exchanges
+- Short-term specimen leasing for temporary research access without permanent ownership changes
 
 ## 🤝 Contributing
 
@@ -211,9 +243,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🌟 Roadmap
 
+- [x] Specimen leasing system for short-term access
 - [ ] Multi-chain deployment support
 - [ ] Integration with botanical databases
-- [ ] Mobile app for field researchers  
+- [ ] Mobile app for field researchers
 - [ ] AI-powered species identification
 - [ ] Carbon credit integration
 - [ ] Seed bank partnerships
