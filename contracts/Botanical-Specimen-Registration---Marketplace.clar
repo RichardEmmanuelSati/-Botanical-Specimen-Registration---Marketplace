@@ -516,4 +516,35 @@
         (map-set auctions auction-id (merge auction {status: "cancelled"}))
         (ok true)))))
 
+(define-public (breed-specimens (parent1-id uint) (parent2-id uint) (scientific-name (string-ascii 100)) (common-name (string-ascii 100)) (location (string-ascii 200)) (genetic-info (string-ascii 500)) (benefits (string-ascii 500)) (license-price uint) (royalty-percent uint))
+  (let ((parent1 (unwrap! (map-get? specimens parent1-id) err-not-found))
+        (parent2 (unwrap! (map-get? specimens parent2-id) err-not-found))
+        (specimen-id (var-get next-specimen-id)))
+    (asserts! (is-eq tx-sender (get owner parent1)) err-not-authorized)
+    (asserts! (is-eq tx-sender (get owner parent2)) err-not-authorized)
+    (asserts! (is-eq (get verification-status parent1) "verified") err-verification-required)
+    (asserts! (is-eq (get verification-status parent2) "verified") err-verification-required)
+    (asserts! (is-eq (get retired parent1) false) err-already-retired)
+    (asserts! (is-eq (get retired parent2) false) err-already-retired)
+    (asserts! (not (is-eq parent1-id parent2-id)) err-already-exists)
+    (try! (nft-mint? botanical-specimen specimen-id tx-sender))
+    (map-set specimens specimen-id {
+      owner: tx-sender,
+      discoverer: tx-sender,
+      scientific-name: scientific-name,
+      common-name: common-name,
+      location: location,
+      genetic-info: genetic-info,
+      benefits: benefits,
+      conservation-status: "unknown",
+      registered-at: block-height,
+      license-price: license-price,
+      royalty-percent: royalty-percent,
+      verification-status: "pending",
+      verified-at: none,
+      retired: false
+    })
+    (var-set next-specimen-id (+ specimen-id u1))
+    (ok specimen-id)))
+
 
