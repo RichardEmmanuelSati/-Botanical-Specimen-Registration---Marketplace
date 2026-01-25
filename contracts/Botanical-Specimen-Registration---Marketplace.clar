@@ -1,0 +1,550 @@
+(define-non-fungible-token botanical-specimen uint)
+
+(define-data-var next-specimen-id uint u1)
+(define-data-var contract-owner principal tx-sender)
+(define-data-var platform-fee-percent uint u5)
+
+(define-map specimens uint {
+  owner: principal,
+  discoverer: principal,
+  scientific-name: (string-ascii 100),
+  common-name: (string-ascii 100),
+  location: (string-ascii 200),
+  genetic-info: (string-ascii 500),
+  benefits: (string-ascii 500),
+  conservation-status: (string-ascii 20),
+  registered-at: uint,
+  license-price: uint,
+  royalty-percent: uint,
+  verification-status: (string-ascii 20),
+  verified-at: (optional uint),
+  retired: bool
+})
+
+(define-map licenses {specimen-id: uint, licensee: principal} {
+  license-type: (string-ascii 50),
+  expires-at: uint,
+  paid-amount: uint,
+  granted-at: uint
+})
+
+(define-map conservation-votes {specimen-id: uint, voter: principal} {
+  status: (string-ascii 20),
+  voted-at: uint
+})
+
+(define-map conservation-proposals uint {
+  specimen-id: uint,
+  proposed-status: (string-ascii 20),
+  votes-for: uint,
+  votes-against: uint,
+  created-at: uint,
+  expires-at: uint
+})
+
+(define-map bounties uint {
+  specimen-id: uint,
+  creator: principal,
+  target-amount: uint,
+  current-amount: uint,
+  description: (string-ascii 500),
+  created-at: uint,
+  expires-at: uint
+})
+
+(define-map bounty-contributions {bounty-id: uint, contributor: principal} uint)
+
+(define-map verification-requests uint {
+  specimen-id: uint,
+  requester: principal,
+  created-at: uint,
+  expires-at: uint,
+  reviews-needed: uint,
+  reviews-submitted: uint,
+  approvals: uint,
+  rejections: uint,
+  status: (string-ascii 20)
+})
+
+(define-map peer-reviews {request-id: uint, reviewer: principal} {
+  approved: bool,
+  review-notes: (string-ascii 500),
+  submitted-at: uint
+})
+
+(define-map reviewer-reputation principal {
+  total-reviews: uint,
+  accurate-reviews: uint,
+  reputation-score: uint
+})
+
+(define-map auctions uint {
+  specimen-id: uint,
+  seller: principal,
+  starting-price: uint,
+  current-bid: uint,
+  current-bidder: (optional principal),
+  end-block: uint,
+  status: (string-ascii 20)
+})
+
+(define-map auction-bids {auction-id: uint, bidder: principal} uint)
+
+(define-map swap-proposals {proposer-specimen: uint, target-specimen: uint} {
+  proposer: principal,
+  proposed-at: uint,
+  status: (string-ascii 20)
+})
+
+(define-map lease-terms uint {
+  daily-rate: uint,
+  max-duration: uint,
+  status: (string-ascii 20)
+})
+
+(define-map leases {specimen-id: uint, lessee: principal} {
+  lease-start: uint,
+  lease-end: uint,
+  total-paid: uint,
+  status: (string-ascii 20)
+})
+
+(define-data-var next-proposal-id uint u1)
+(define-data-var next-bounty-id uint u1)
+(define-data-var next-verification-id uint u1)
+(define-data-var min-reviews-required uint u3)
+(define-data-var next-auction-id uint u1)
+(define-data-var next-lease-id uint u1)
+
+(define-constant err-not-authorized (err u1001))
+(define-constant err-not-found (err u1002))
+(define-constant err-already-exists (err u1003))
+(define-constant err-invalid-amount (err u1004))
+(define-constant err-expired (err u1005))
+(define-constant err-insufficient-funds (err u1006))
+(define-constant err-verification-required (err u1007))
+(define-constant err-already-reviewed (err u1008))
+(define-constant err-auction-not-found (err u1009))
+(define-constant err-auction-ended (err u1010))
+(define-constant err-bid-too-low (err u1011))
+(define-constant err-already-retired (err u1012))
+(define-constant err-swap-not-found (err u1013))
+(define-constant err-swap-already-accepted (err u1014))
+(define-constant err-swap-expired (err u1015))
+(define-constant err-lease-not-found (err u1016))
+(define-constant err-lease-active (err u1017))
+(define-constant err-lease-expired (err u1018))
+(define-constant err-invalid-duration (err u1019))
+
+(define-read-only (get-specimen (specimen-id uint))
+  (map-get? specimens specimen-id))
+
+(define-read-only (get-license (specimen-id uint) (licensee principal))
+  (map-get? licenses {specimen-id: specimen-id, licensee: licensee}))
+
+(define-read-only (get-conservation-proposal (proposal-id uint))
+  (map-get? conservation-proposals proposal-id))
+
+(define-read-only (get-bounty (bounty-id uint))
+  (map-get? bounties bounty-id))
+
+(define-read-only (get-next-specimen-id)
+  (var-get next-specimen-id))
+
+(define-read-only (get-verification-request (request-id uint))
+  (map-get? verification-requests request-id))
+
+(define-read-only (get-peer-review (request-id uint) (reviewer principal))
+  (map-get? peer-reviews {request-id: request-id, reviewer: reviewer}))
+
+(define-read-only (get-reviewer-reputation (reviewer principal))
+  (map-get? reviewer-reputation reviewer))
+
+(define-read-only (get-auction (auction-id uint))
+  (map-get? auctions auction-id))
+
+(define-read-only (get-auction-bid (auction-id uint) (bidder principal))
+  (map-get? auction-bids {auction-id: auction-id, bidder: bidder}))
+
+(define-read-only (get-swap-proposal (proposer-specimen uint) (target-specimen uint))
+  (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}))
+
+(define-read-only (get-lease (specimen-id uint) (lessee principal))
+  (map-get? leases {specimen-id: specimen-id, lessee: lessee}))
+
+(define-public (propose-swap (proposer-specimen uint) (target-specimen uint))
+  (let ((proposer-specimen-data (unwrap! (map-get? specimens proposer-specimen) err-not-found))
+        (target-specimen-data (unwrap! (map-get? specimens target-specimen) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner proposer-specimen-data)) err-not-authorized)
+    (asserts! (not (is-eq proposer-specimen target-specimen)) err-already-exists)
+    (asserts! (is-eq (get verification-status proposer-specimen-data) "verified") err-verification-required)
+    (asserts! (is-eq (get verification-status target-specimen-data) "verified") err-verification-required)
+    (asserts! (is-eq (get retired proposer-specimen-data) false) err-already-retired)
+    (asserts! (is-eq (get retired target-specimen-data) false) err-already-retired)
+    (asserts! (is-none (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen})) err-already-exists)
+    (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} {
+      proposer: tx-sender,
+      proposed-at: block-height,
+      status: "pending"
+    })
+    (ok true)))
+
+(define-public (accept-swap (proposer-specimen uint) (target-specimen uint))
+  (let ((swap-proposal (unwrap! (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}) err-swap-not-found))
+        (proposer-specimen-data (unwrap! (map-get? specimens proposer-specimen) err-not-found))
+        (target-specimen-data (unwrap! (map-get? specimens target-specimen) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner target-specimen-data)) err-not-authorized)
+    (asserts! (is-eq (get status swap-proposal) "pending") err-swap-already-accepted)
+    (asserts! (< (- block-height (get proposed-at swap-proposal)) u144) err-swap-expired)
+    (try! (nft-transfer? botanical-specimen proposer-specimen (get owner proposer-specimen-data) (get owner target-specimen-data)))
+    (try! (nft-transfer? botanical-specimen target-specimen (get owner target-specimen-data) (get owner proposer-specimen-data)))
+    (map-set specimens proposer-specimen (merge proposer-specimen-data {owner: (get owner target-specimen-data)}))
+    (map-set specimens target-specimen (merge target-specimen-data {owner: (get owner proposer-specimen-data)}))
+    (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} (merge swap-proposal {status: "completed"}))
+    (ok true)))
+
+(define-public (cancel-swap (proposer-specimen uint) (target-specimen uint))
+  (let ((swap-proposal (unwrap! (map-get? swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen}) err-swap-not-found)))
+    (asserts! (is-eq tx-sender (get proposer swap-proposal)) err-not-authorized)
+    (asserts! (is-eq (get status swap-proposal) "pending") err-swap-already-accepted)
+    (map-set swap-proposals {proposer-specimen: proposer-specimen, target-specimen: target-specimen} (merge swap-proposal {status: "cancelled"}))
+    (ok true)))
+
+(define-public (set-lease-terms (specimen-id uint) (daily-rate uint) (max-duration uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (asserts! (> max-duration u0) err-invalid-duration)
+    (asserts! (> daily-rate u0) err-invalid-amount)
+    (map-set lease-terms specimen-id {
+      daily-rate: daily-rate,
+      max-duration: max-duration,
+      status: "active"
+    })
+    (ok true)))
+
+(define-public (rent-specimen (specimen-id uint) (rental-days uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (lease-terms-data (unwrap! (map-get? lease-terms specimen-id) err-lease-not-found))
+        (rental-cost (* (get daily-rate lease-terms-data) rental-days)))
+    (asserts! (is-eq (get status lease-terms-data) "active") err-lease-expired)
+    (asserts! (<= rental-days (get max-duration lease-terms-data)) err-invalid-duration)
+    (asserts! (> rental-days u0) err-invalid-duration)
+    (asserts! (is-none (map-get? leases {specimen-id: specimen-id, lessee: tx-sender})) err-already-exists)
+    (try! (stx-transfer? rental-cost tx-sender (get owner specimen)))
+    (map-set leases {specimen-id: specimen-id, lessee: tx-sender} {
+      lease-start: block-height,
+      lease-end: (+ block-height rental-days),
+      total-paid: rental-cost,
+      status: "active"
+    })
+    (ok true)))
+
+(define-public (end-lease (specimen-id uint))
+  (let ((lease (unwrap! (map-get? leases {specimen-id: specimen-id, lessee: tx-sender}) err-lease-not-found)))
+    (asserts! (is-eq (get status lease) "active") err-lease-expired)
+    (map-set leases {specimen-id: specimen-id, lessee: tx-sender} (merge lease {status: "ended"}))
+    (ok true)))
+
+(define-public (register-specimen
+  (scientific-name (string-ascii 100))
+  (common-name (string-ascii 100))
+  (location (string-ascii 200))
+  (genetic-info (string-ascii 500))
+  (benefits (string-ascii 500))
+  (license-price uint)
+  (royalty-percent uint))
+  (let ((specimen-id (var-get next-specimen-id)))
+    (try! (nft-mint? botanical-specimen specimen-id tx-sender))
+    (map-set specimens specimen-id {
+      owner: tx-sender,
+      discoverer: tx-sender,
+      scientific-name: scientific-name,
+      common-name: common-name,
+      location: location,
+      genetic-info: genetic-info,
+      benefits: benefits,
+      conservation-status: "unknown",
+      registered-at: block-height,
+      license-price: license-price,
+      royalty-percent: royalty-percent,
+      verification-status: "pending",
+      verified-at: none,
+      retired: false
+    })
+    (var-set next-specimen-id (+ specimen-id u1))
+    (ok specimen-id)))
+
+(define-public (purchase-license (specimen-id uint) (license-type (string-ascii 50)) (duration uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (license-cost (get license-price specimen))
+        (platform-fee (/ (* license-cost (var-get platform-fee-percent)) u100))
+        (owner-payment (- license-cost platform-fee))
+        (royalty-amount (/ (* license-cost (get royalty-percent specimen)) u100))
+        (discoverer-payment (- owner-payment royalty-amount)))
+    (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (try! (stx-transfer? license-cost tx-sender (get owner specimen)))
+    (if (not (is-eq (get owner specimen) (get discoverer specimen)))
+      (try! (stx-transfer? royalty-amount (get owner specimen) (get discoverer specimen)))
+      true)
+    (try! (stx-transfer? platform-fee tx-sender (var-get contract-owner)))
+    (map-set licenses {specimen-id: specimen-id, licensee: tx-sender} {
+      license-type: license-type,
+      expires-at: (+ block-height duration),
+      paid-amount: license-cost,
+      granted-at: block-height
+    })
+    (ok true)))
+
+(define-public (transfer-specimen (specimen-id uint) (new-owner principal))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (try! (nft-transfer? botanical-specimen specimen-id tx-sender new-owner))
+    (map-set specimens specimen-id (merge specimen {owner: new-owner}))
+    (ok true)))
+
+(define-public (create-conservation-proposal (specimen-id uint) (proposed-status (string-ascii 20)))
+  (let ((proposal-id (var-get next-proposal-id)))
+    (asserts! (is-some (map-get? specimens specimen-id)) err-not-found)
+    (map-set conservation-proposals proposal-id {
+      specimen-id: specimen-id,
+      proposed-status: proposed-status,
+      votes-for: u0,
+      votes-against: u0,
+      created-at: block-height,
+      expires-at: (+ block-height u144)
+    })
+    (var-set next-proposal-id (+ proposal-id u1))
+    (ok proposal-id)))
+
+(define-public (vote-conservation (proposal-id uint) (vote-for bool))
+  (let ((proposal (unwrap! (map-get? conservation-proposals proposal-id) err-not-found)))
+    (asserts! (< block-height (get expires-at proposal)) err-expired)
+    (asserts! (is-none (map-get? conservation-votes {specimen-id: (get specimen-id proposal), voter: tx-sender})) err-already-exists)
+    (map-set conservation-votes {specimen-id: (get specimen-id proposal), voter: tx-sender} {
+      status: (if vote-for "for" "against"),
+      voted-at: block-height
+    })
+    (if vote-for
+      (map-set conservation-proposals proposal-id (merge proposal {votes-for: (+ (get votes-for proposal) u1)}))
+      (map-set conservation-proposals proposal-id (merge proposal {votes-against: (+ (get votes-against proposal) u1)})))
+    (ok true)))
+
+(define-public (execute-conservation-proposal (proposal-id uint))
+  (let ((proposal (unwrap! (map-get? conservation-proposals proposal-id) err-not-found))
+        (specimen-id (get specimen-id proposal)))
+    (asserts! (>= block-height (get expires-at proposal)) err-not-authorized)
+    (asserts! (> (get votes-for proposal) (get votes-against proposal)) err-not-authorized)
+    (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+      (map-set specimens specimen-id (merge specimen {conservation-status: (get proposed-status proposal)}))
+      (ok true))))
+
+(define-public (create-bounty (specimen-id uint) (target-amount uint) (description (string-ascii 500)) (duration uint))
+  (let ((bounty-id (var-get next-bounty-id)))
+    (asserts! (is-some (map-get? specimens specimen-id)) err-not-found)
+    (asserts! (> target-amount u0) err-invalid-amount)
+    (map-set bounties bounty-id {
+      specimen-id: specimen-id,
+      creator: tx-sender,
+      target-amount: target-amount,
+      current-amount: u0,
+      description: description,
+      created-at: block-height,
+      expires-at: (+ block-height duration)
+    })
+    (var-set next-bounty-id (+ bounty-id u1))
+    (ok bounty-id)))
+
+(define-public (contribute-to-bounty (bounty-id uint) (amount uint))
+  (let ((bounty (unwrap! (map-get? bounties bounty-id) err-not-found)))
+    (asserts! (< block-height (get expires-at bounty)) err-expired)
+    (asserts! (> amount u0) err-invalid-amount)
+    (let ((current-contribution (default-to u0 (map-get? bounty-contributions {bounty-id: bounty-id, contributor: tx-sender}))))
+      (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+      (map-set bounty-contributions {bounty-id: bounty-id, contributor: tx-sender} (+ current-contribution amount))
+      (map-set bounties bounty-id (merge bounty {current-amount: (+ (get current-amount bounty) amount)}))
+      (ok true))))
+
+(define-public (claim-bounty (bounty-id uint))
+  (let ((bounty (unwrap! (map-get? bounties bounty-id) err-not-found))
+        (specimen (unwrap! (map-get? specimens (get specimen-id bounty)) err-not-found)))
+    (asserts! (is-eq tx-sender (get discoverer specimen)) err-not-authorized)
+    (asserts! (>= (get current-amount bounty) (get target-amount bounty)) err-insufficient-funds)
+    (try! (as-contract (stx-transfer? (get current-amount bounty) tx-sender (get discoverer specimen))))
+    (ok true)))
+
+(define-public (update-license-price (specimen-id uint) (new-price uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (map-set specimens specimen-id (merge specimen {license-price: new-price}))
+    (ok true)))
+
+(define-public (retire-specimen (specimen-id uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (map-set specimens specimen-id (merge specimen {retired: true}))
+    (ok true)))
+
+(define-public (request-verification (specimen-id uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (verification-id (var-get next-verification-id)))
+    (asserts! (is-eq tx-sender (get discoverer specimen)) err-not-authorized)
+    (asserts! (is-eq (get verification-status specimen) "pending") err-already-exists)
+    (map-set verification-requests verification-id {
+      specimen-id: specimen-id,
+      requester: tx-sender,
+      created-at: block-height,
+      expires-at: (+ block-height u1008),
+      reviews-needed: (var-get min-reviews-required),
+      reviews-submitted: u0,
+      approvals: u0,
+      rejections: u0,
+      status: "open"
+    })
+    (var-set next-verification-id (+ verification-id u1))
+    (ok verification-id)))
+
+(define-public (submit-peer-review (request-id uint) (approved bool) (review-notes (string-ascii 500)))
+  (let ((verification-request (unwrap! (map-get? verification-requests request-id) err-not-found))
+        (existing-review (map-get? peer-reviews {request-id: request-id, reviewer: tx-sender})))
+    (asserts! (is-none existing-review) err-already-reviewed)
+    (asserts! (< block-height (get expires-at verification-request)) err-expired)
+    (asserts! (is-eq (get status verification-request) "open") err-expired)
+    (map-set peer-reviews {request-id: request-id, reviewer: tx-sender} {
+      approved: approved,
+      review-notes: review-notes,
+      submitted-at: block-height
+    })
+    (let ((updated-request (merge verification-request {
+            reviews-submitted: (+ (get reviews-submitted verification-request) u1),
+            approvals: (if approved (+ (get approvals verification-request) u1) (get approvals verification-request)),
+            rejections: (if approved (get rejections verification-request) (+ (get rejections verification-request) u1))
+          }))
+          (current-reputation (default-to {total-reviews: u0, accurate-reviews: u0, reputation-score: u0} 
+                                         (map-get? reviewer-reputation tx-sender))))
+      (map-set verification-requests request-id updated-request)
+      (map-set reviewer-reputation tx-sender (merge current-reputation {
+        total-reviews: (+ (get total-reviews current-reputation) u1)
+      }))
+      (if (>= (get reviews-submitted updated-request) (get reviews-needed updated-request))
+        (finalize-verification request-id)
+        (ok true)))))
+
+(define-private (finalize-verification (request-id uint))
+  (let ((verification-request (unwrap! (map-get? verification-requests request-id) err-not-found))
+        (specimen-id (get specimen-id verification-request))
+        (specimen (unwrap! (map-get? specimens specimen-id) err-not-found)))
+    (let ((final-status (if (> (get approvals verification-request) (get rejections verification-request)) "verified" "rejected")))
+      (map-set specimens specimen-id (merge specimen {
+        verification-status: final-status,
+        verified-at: (if (is-eq final-status "verified") (some block-height) none)
+      }))
+      (map-set verification-requests request-id (merge verification-request {status: "completed"}))
+      (ok true))))
+
+(define-public (update-reviewer-accuracy (reviewer principal) (was-accurate bool))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) err-not-authorized)
+    (let ((current-reputation (default-to {total-reviews: u0, accurate-reviews: u0, reputation-score: u0}
+                                         (map-get? reviewer-reputation reviewer))))
+      (let ((new-accurate-count (if was-accurate (+ (get accurate-reviews current-reputation) u1) (get accurate-reviews current-reputation)))
+            (total-reviews (get total-reviews current-reputation)))
+        (if (> total-reviews u0)
+          (let ((new-score (/ (* new-accurate-count u100) total-reviews)))
+            (map-set reviewer-reputation reviewer (merge current-reputation {
+              accurate-reviews: new-accurate-count,
+              reputation-score: new-score
+            }))
+            (ok true))
+          (ok true))))))
+
+(define-public (create-auction (specimen-id uint) (starting-price uint) (duration uint))
+  (let ((specimen (unwrap! (map-get? specimens specimen-id) err-not-found))
+        (auction-id (var-get next-auction-id)))
+    (asserts! (is-eq tx-sender (get owner specimen)) err-not-authorized)
+    (asserts! (is-eq (get verification-status specimen) "verified") err-verification-required)
+    (asserts! (is-eq (get retired specimen) false) err-already-retired)
+    (map-set auctions auction-id {
+      specimen-id: specimen-id,
+      seller: tx-sender,
+      starting-price: starting-price,
+      current-bid: u0,
+      current-bidder: none,
+      end-block: (+ block-height duration),
+      status: "active"
+    })
+    (var-set next-auction-id (+ auction-id u1))
+    (ok auction-id)))
+
+(define-public (place-bid (auction-id uint) (bid-amount uint))
+  (let ((auction (unwrap! (map-get? auctions auction-id) err-auction-not-found)))
+    (asserts! (is-eq (get status auction) "active") err-auction-ended)
+    (asserts! (< block-height (get end-block auction)) err-expired)
+    (asserts! (> bid-amount (get current-bid auction)) err-bid-too-low)
+    (let ((previous-bidder (get current-bidder auction)))
+      (if (is-some previous-bidder)
+        (let ((refund-amount (unwrap-panic (map-get? auction-bids {auction-id: auction-id, bidder: (unwrap-panic previous-bidder)}))))
+          (try! (as-contract (stx-transfer? refund-amount tx-sender (unwrap-panic previous-bidder)))))
+        true)
+      (try! (stx-transfer? bid-amount tx-sender (as-contract tx-sender)))
+      (map-set auction-bids {auction-id: auction-id, bidder: tx-sender} bid-amount)
+      (map-set auctions auction-id (merge auction {
+        current-bid: bid-amount,
+        current-bidder: (some tx-sender)
+      }))
+      (ok true))))
+
+(define-public (end-auction (auction-id uint))
+  (let ((auction (unwrap! (map-get? auctions auction-id) err-auction-not-found)))
+    (asserts! (>= block-height (get end-block auction)) err-not-authorized)
+    (asserts! (is-eq (get status auction) "active") err-already-exists)
+    (if (is-some (get current-bidder auction))
+      (let ((winner (unwrap-panic (get current-bidder auction)))
+            (final-bid (get current-bid auction))
+            (platform-fee (/ (* final-bid (var-get platform-fee-percent)) u100))
+            (seller-payment (- final-bid platform-fee)))
+        (try! (as-contract (stx-transfer? seller-payment tx-sender (get seller auction))))
+        (try! (stx-transfer? platform-fee (as-contract tx-sender) (var-get contract-owner)))
+        (try! (nft-transfer? botanical-specimen (get specimen-id auction) (get seller auction) winner))
+        (map-set specimens (get specimen-id auction) (merge (unwrap-panic (map-get? specimens (get specimen-id auction))) {owner: winner}))
+        (map-set auctions auction-id (merge auction {status: "completed"}))
+        (ok true))
+      (begin
+        (map-set auctions auction-id (merge auction {status: "cancelled"}))
+        (ok true)))))
+
+(define-public (breed-specimens (parent1-id uint) (parent2-id uint) (scientific-name (string-ascii 100)) (common-name (string-ascii 100)) (location (string-ascii 200)) (genetic-info (string-ascii 500)) (benefits (string-ascii 500)) (license-price uint) (royalty-percent uint))
+  (let ((parent1 (unwrap! (map-get? specimens parent1-id) err-not-found))
+        (parent2 (unwrap! (map-get? specimens parent2-id) err-not-found))
+        (specimen-id (var-get next-specimen-id)))
+    (asserts! (is-eq tx-sender (get owner parent1)) err-not-authorized)
+    (asserts! (is-eq tx-sender (get owner parent2)) err-not-authorized)
+    (asserts! (is-eq (get verification-status parent1) "verified") err-verification-required)
+    (asserts! (is-eq (get verification-status parent2) "verified") err-verification-required)
+    (asserts! (is-eq (get retired parent1) false) err-already-retired)
+    (asserts! (is-eq (get retired parent2) false) err-already-retired)
+    (asserts! (not (is-eq parent1-id parent2-id)) err-already-exists)
+    (try! (nft-mint? botanical-specimen specimen-id tx-sender))
+    (map-set specimens specimen-id {
+      owner: tx-sender,
+      discoverer: tx-sender,
+      scientific-name: scientific-name,
+      common-name: common-name,
+      location: location,
+      genetic-info: genetic-info,
+      benefits: benefits,
+      conservation-status: "unknown",
+      registered-at: block-height,
+      license-price: license-price,
+      royalty-percent: royalty-percent,
+      verification-status: "pending",
+      verified-at: none,
+      retired: false
+    })
+    (var-set next-specimen-id (+ specimen-id u1))
+    (ok specimen-id)))
+
+
